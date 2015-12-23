@@ -22,6 +22,10 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Binder
 import android.os.IBinder
 import android.telephony.PhoneStateListener
@@ -30,6 +34,7 @@ import android.telephony.TelephonyManager
 import com.android.deskclock.AlarmAlertWakeLock
 import com.android.deskclock.LogUtils
 import com.android.deskclock.R
+import com.android.deskclock.data.DataModel
 import com.android.deskclock.events.Events
 import com.android.deskclock.provider.AlarmInstance
 import com.android.deskclock.provider.ClockContract.InstancesColumns
@@ -66,6 +71,9 @@ class AlarmService : Service() {
 
     private lateinit var mTelephonyManager: TelephonyManager
     private var mCurrentAlarm: AlarmInstance? = null
+    private lateinit var mSensorManager: SensorManager
+    private var mFlipAction: Int = 0
+    private var mShakeAction: Int = 0
 
     private fun startAlarm(instance: AlarmInstance) {
         LogUtils.v("AlarmService.start with instance: " + instance.mId)
@@ -81,6 +89,7 @@ class AlarmService : Service() {
         mTelephonyManager.listen(mPhoneStateListener.init(), PhoneStateListener.LISTEN_CALL_STATE)
         AlarmKlaxon.start(this, mCurrentAlarm!!)
         sendBroadcast(Intent(ALARM_ALERT_ACTION))
+        attachListeners()
     }
 
     private fun stopCurrentAlarm() {
@@ -99,6 +108,7 @@ class AlarmService : Service() {
         stopForeground(true /* removeNotification */)
 
         mCurrentAlarm = null
+        detachListeners()
         AlarmAlertWakeLock.releaseCpuLock()
     }
 
@@ -143,6 +153,11 @@ class AlarmService : Service() {
         filter.addAction(ALARM_DISMISS_ACTION)
         registerReceiver(mActionsReceiver, filter)
         mIsRegistered = true
+
+        // set up for flip and shake actions
+        mSensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        mFlipAction = DataModel.dataModel.flipAction
+        mShakeAction = DataModel.dataModel.shakeAction
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -221,6 +236,151 @@ class AlarmService : Service() {
         }
     }
 
+    private interface ResettableSensorEventListener : SensorEventListener {
+        fun reset()
+    }
+
+    private val mFlipListener: ResettableSensorEventListener = object : ResettableSensorEventListener {
+        // Accelerometers are not quite accurate.
+	private val GRAVITY_UPPER_THRESHOLD: Float = 1.3f * SensorManager.STANDARD_GRAVITY
+        private val GRAVITY_LOWER_THRESHOLD: Float = 0.7f * SensorManager.STANDARD_GRAVITY
+        private val SENSOR_SAMPLES = 3
+        private var mStopped = false
+        private var mWasFaceUp = false
+        private val mSamples = BooleanArray(SENSOR_SAMPLES)
+        private var mSampleIndex = 0
+
+        @Override
+        override fun onAccuracyChanged(sensor: Sensor?, acc: Int) {
+        }
+
+        @Override
+        override fun reset() {
+            mWasFaceUp = false
+            mStopped = false
+            for (i in 0 until SENSOR_SAMPLES) {
+                mSamples[i] = false
+            }
+        }
+
+        private fun filterSamples(): Boolean {
+            var allPass = true
+            for (sample in mSamples) {
+                allPass = allPass && sample
+            }
+            return allPass
+        }
+
+        @Override
+        override fun onSensorChanged(event: SensorEvent) {
+            // Add a sample overwriting the oldest one. Several samples
+            // are used to avoid the erroneous values the sensor sometimes
+            // returns.
+            val z: Float = event.values.get(2)
+            if (mStopped) {
+                return
+            }
+            if (!mWasFaceUp) {
+                // Check if its face up enough.
+                mSamples[mSampleIndex] = z > GRAVITY_LOWER_THRESHOLD &&
+                        z < GRAVITY_UPPER_THRESHOLD
+
+                // face up
+                if (filterSamples()) {
+                    mWasFaceUp = true
+                    for (i in 0 until SENSOR_SAMPLES) {
+                        mSamples[i] = false
+                    }
+                }
+            } else {
+                // Check if its face down enough.
+                mSamples[mSampleIndex] = z < -GRAVITY_LOWER_THRESHOLD &&
+                        z > -GRAVITY_UPPER_THRESHOLD
+
+                // face down
+                if (filterSamples()) {
+                    mStopped = true
+                    handleAction(mFlipAction)
+                }
+            }
+            mSampleIndex = (mSampleIndex + 1) % SENSOR_SAMPLES
+        }
+    };
+
+    private val mShakeListener: SensorEventListener = object : SensorEventListener {
+        private val SENSITIVITY = 16f
+        private val BUFFER = 5
+        private val gravity = FloatArray(3)
+        private var average = 0f
+        private var fill = 0
+
+        @Override
+        override fun onAccuracyChanged(sensor: Sensor?, acc: Int) {
+        }
+
+        override fun onSensorChanged(event: SensorEvent) {
+            val alpha = 0.8F
+	    for (i in 0..2) {
+                gravity[i] = alpha * gravity[i] + (1 - alpha) * event.values.get(i)
+            }
+            val x: Float = event.values.get(0) - gravity[0]
+            val y: Float = event.values.get(1) - gravity[1]
+            val z: Float = event.values.get(2) - gravity[2]
+            if (fill <= BUFFER) {
+                average += Math.abs(x) + Math.abs(y) + Math.abs(z)
+                fill++
+            } else {
+                if (average / BUFFER >= SENSITIVITY) {
+                    handleAction(mShakeAction)
+                }
+                average = 0f
+                fill = 0
+            }
+        }
+    }
+
+    private fun attachListeners() {
+	if (mFlipAction !== ALARM_NO_ACTION) {
+            mFlipListener.reset()
+            mSensorManager.registerListener(mFlipListener,
+                    mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER),
+                    SensorManager.SENSOR_DELAY_NORMAL,
+                    300 * 1000) //batch every 300 milliseconds
+        }
+        if (mShakeAction !== ALARM_NO_ACTION) {
+            mSensorManager.registerListener(mShakeListener,
+                    mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER),
+                    SensorManager.SENSOR_DELAY_GAME,
+                    50 * 1000) //batch every 50 milliseconds
+        }
+    }
+
+    private fun detachListeners() {
+        if (mFlipAction !== ALARM_NO_ACTION) {
+            mSensorManager.unregisterListener(mFlipListener)
+        }
+        if (mShakeAction !== ALARM_NO_ACTION) {
+            mSensorManager.unregisterListener(mShakeListener)
+        }
+    }
+
+    private fun handleAction(action: Int) {
+        when (action) {
+            ALARM_SNOOZE ->                 // Setup Snooze Action
+                startService(AlarmStateManager.createStateChangeIntent(this,
+                        AlarmStateManager.ALARM_SNOOZE_TAG, mCurrentAlarm!!,
+                        InstancesColumns.SNOOZE_STATE))
+            ALARM_DISMISS ->                 // Setup Dismiss Action
+                startService(AlarmStateManager.createStateChangeIntent(this,
+                        AlarmStateManager.ALARM_DISMISS_TAG, mCurrentAlarm!!,
+                        InstancesColumns.DISMISSED_STATE))
+            ALARM_NO_ACTION -> {
+            }
+            else -> {
+            }
+        }
+    }
+
     companion object {
         /**
          * AlarmActivity and AlarmService (when unbound) listen for this broadcast intent
@@ -243,6 +403,14 @@ class AlarmService : Service() {
 
         /** Private action used to stop an alarm with this service.  */
         const val STOP_ALARM_ACTION = "STOP_ALARM"
+
+        // constants for no action/snooze/dismiss
+        const val ALARM_NO_ACTION = 0
+        const val ALARM_SNOOZE = 1
+        const val ALARM_DISMISS = 2
+
+        // default action for flip and shake
+        const val DEFAULT_ACTION = ALARM_NO_ACTION.toString()
 
         /**
          * Utility method to help stop an alarm properly. Nothing will happen, if alarm is not firing

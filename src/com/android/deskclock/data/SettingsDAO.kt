@@ -339,6 +339,16 @@ internal object SettingsDAO {
         return TimeZones(tzIds.requireNoNulls(), tzNames.requireNoNulls())
     }
 
+    fun getFlipAction(prefs: SharedPreferences): Int {
+        val string: String = prefs.getString(SettingsActivity.KEY_FLIP_ACTION, "0")!!
+        return string.toInt()
+    }
+
+    fun getShakeAction(prefs: SharedPreferences): Int {
+        val string: String = prefs.getString(SettingsActivity.KEY_SHAKE_ACTION, "0")!!
+        return string.toInt()
+    }
+
     private fun getClockStyle(context: Context, prefs: SharedPreferences, key: String): ClockStyle {
         val defaultStyle: String = context.getString(R.string.default_clock_style)
         val clockStyle: String = prefs.getString(key, defaultStyle)!!

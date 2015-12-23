@@ -729,6 +729,12 @@ class DataModel private constructor() {
     val snoozeLength: Int
         get() = mAlarmModel!!.snoozeLength
 
+    val flipAction: Int
+        get() = mAlarmModel!!.flipAction
+
+    val shakeAction: Int
+        get() = mAlarmModel!!.shakeAction
+
     //
     // Stopwatch
     //
