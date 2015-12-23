@@ -112,6 +112,12 @@ internal class SettingsModel(
 
     val snoozeLength: Int
         get() = SettingsDAO.getSnoozeLength(mPrefs)
+        
+    val flipAction: Int
+        get() = SettingsDAO.getFlipAction(mPrefs)
+        
+    val shakeAction: Int
+        get() = SettingsDAO.getShakeAction(mPrefs)
 
     var defaultAlarmRingtoneUri: Uri
         get() = SettingsDAO.getDefaultAlarmRingtoneUri(mPrefs)

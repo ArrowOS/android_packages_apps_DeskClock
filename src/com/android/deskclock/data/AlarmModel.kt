@@ -74,6 +74,12 @@ internal class AlarmModel(
     val snoozeLength: Int
         get() = mSettingsModel.snoozeLength
 
+    val flipAction: Int
+        get() = mSettingsModel.flipAction
+        
+    val shakeAction: Int
+        get() = mSettingsModel.shakeAction
+        
     /**
      * This receiver is notified when system settings change. Cached information built on
      * those system settings must be cleared.

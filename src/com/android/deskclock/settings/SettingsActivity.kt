@@ -18,6 +18,8 @@ package com.android.deskclock.settings
 
 import android.content.Context
 import android.content.Intent
+import android.hardware.Sensor
+import android.hardware.SensorManager
 import android.os.Bundle
 import android.os.Vibrator
 import android.provider.Settings
@@ -40,6 +42,8 @@ import com.android.deskclock.actionbarmenu.NavUpMenuItemController
 import com.android.deskclock.actionbarmenu.OptionsMenuManager
 import com.android.deskclock.data.DataModel
 import com.android.deskclock.ringtone.RingtonePickerActivity
+
+import java.util.List
 
 /**
  * Settings for the Alarm Clock.
@@ -132,7 +136,7 @@ class SettingsActivity : BaseActivity() {
                     val index: Int = preference.findIndexOfValue(newValue as String)
                     preference.setSummary(preference.getEntries().get(index))
                 }
-                KEY_CLOCK_STYLE, KEY_WEEK_START, KEY_VOLUME_BUTTONS -> {
+                KEY_CLOCK_STYLE, KEY_WEEK_START, KEY_VOLUME_BUTTONS, KEY_FLIP_ACTION, KEY_SHAKE_ACTION -> {
                     val simpleMenuPreference = pref as SimpleMenuPreference
                     val i: Int = simpleMenuPreference.findIndexOfValue(newValue as String)
                     pref.setSummary(simpleMenuPreference.getEntries().get(i))
@@ -273,6 +277,30 @@ class SettingsActivity : BaseActivity() {
                 it.setOnPreferenceClickListener(this)
                 it.setSummary(DataModel.dataModel.timerRingtoneTitle)
             }
+            
+	    val sensorManager: SensorManager = getActivity()?.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+	
+	    val flipActionPref: SimpleMenuPreference? = findPreference(KEY_FLIP_ACTION) as SimpleMenuPreference?
+            if (flipActionPref != null) {
+            	val sensorList: MutableList<Sensor> = sensorManager.getSensorList(Sensor.TYPE_ORIENTATION)
+                if (sensorList.size < 1) { // This will be true if no orientation sensor
+                    flipActionPref.setValue("0") // Turn it off
+                } else {
+                    flipActionPref.setSummary(flipActionPref.getEntry())
+                    flipActionPref.setOnPreferenceChangeListener(this)
+                }
+            }
+	
+	    val shakeActionPref: SimpleMenuPreference? = findPreference(KEY_SHAKE_ACTION) as SimpleMenuPreference?
+            if (shakeActionPref != null) {
+                val sensorList: MutableList<Sensor> = sensorManager.getSensorList(Sensor.TYPE_ACCELEROMETER)
+                if (sensorList.size < 1) { // This will be true if no accelerometer sensor
+                    shakeActionPref.setValue("0") // Turn it off
+                } else {
+                    shakeActionPref.setSummary(shakeActionPref.getEntry())
+                    shakeActionPref.setOnPreferenceChangeListener(this)
+                }
+            }
         }
 
         private fun refreshListPreference(preference: ListPreference) {
@@ -305,6 +333,8 @@ class SettingsActivity : BaseActivity() {
         const val KEY_DATE_TIME = "date_time"
         const val KEY_VOLUME_BUTTONS = "volume_button_setting"
         const val KEY_WEEK_START = "week_start"
+        const val KEY_FLIP_ACTION = "flip_action"
+        const val KEY_SHAKE_ACTION = "shake_action";
         const val DEFAULT_VOLUME_BEHAVIOR = "0"
         const val VOLUME_BEHAVIOR_SNOOZE = "1"
         const val VOLUME_BEHAVIOR_DISMISS = "2"
